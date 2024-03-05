@@ -149,7 +149,7 @@ class MeshViewer:
     def build_ui(self):
         with VAppLayout(self.server) as layout:
             with layout.root:
-                with html.Div(ref="container", style="height: 100vh; width:100vw"):
+                with html.Div(ref="container",  style="height: 600px; width:800px"): # add the following arg: style="height: 100vh; width:100vw" to have the plotter taking all screen
                     plotter_ui(self.pl)
                     with vuetify.VRow( dense=True):
                         with vuetify.VCol(cols="6"):
