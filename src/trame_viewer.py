@@ -41,12 +41,13 @@ class MeshViewer:
 
         self.counter = 30
         formatted_num = "{:02d}".format(self.counter)
-        print()
-        self.mesh = pv.read(
+
+        self.mesh = None
+        mesh = pv.read(
             f"/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-0000{formatted_num}.vtk")
-        print(self.mesh.array_names)
-        self.clean_mesh = self.mesh.copy()
-        self.options = self.mesh.array_names.copy()
+
+        self.clean_mesh = mesh.copy()
+        self.options = mesh.array_names.copy()
         self.options.insert(0, "None")
         self.style = {
             "background-color": "black",
@@ -56,14 +57,16 @@ class MeshViewer:
         self.pl.background_color = self.style["background-color"]
         self.pl.theme.font.color = self.style["font-color"]
 
-        kwargs_plot = {}
-        self.mesh.set_active_scalars(None)
-        kwargs_plot["style"] = "wireframe"
+
+        self.scalar_bar_exist = False
+
         setattr(self, "on_server_bind", self.server.controller.add("on_server_bind")(self.on_server_bind))
-        self.actor = self.pl.add_mesh(self.mesh, **kwargs_plot)
+
+        self.replace_mesh(mesh)
         self.my_routes = [
             web.get("/select_mesh", self.change_mesh),
         ]
+
         self.state.mesh_representation = self.options[1]
         self.state.warp_input = 0
         self.state.wireframe_on = True
@@ -72,8 +75,9 @@ class MeshViewer:
         self.timeout = 0.25
         self.timer = threading.Thread(target=self.timer_callback)
         self.sequence_bounds = [0, 70]
+        self.viewer = plotter_ui(self.pl, default_server_rendering=False)
 
-
+        self.stop_event = threading.Event()
 
         self.loop = asyncio.get_event_loop()
 
@@ -81,11 +85,15 @@ class MeshViewer:
             pv.read("/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-0000{:02d}.vtk".format(
                 slider_value)) for slider_value in range(self.sequence_bounds[1])
         ]
-
+        self.prev_bar_repr = self.state.mesh_representation
         self.build_ui()
 
     @change("mesh_representation")
     def update_mesh_representation(self, mesh_representation, **kwargs):
+        if self.mesh is not None and self.scalar_bar_exist and self.prev_bar_repr is not None:
+            self.pl.remove_scalar_bar(self.prev_bar_repr)
+
+        self.prev_bar_repr = mesh_representation
         print(mesh_representation)
         if mesh_representation == "None":
             self.state.mesh_representation = None
@@ -118,10 +126,7 @@ class MeshViewer:
 
     @change("slider_value")
     def slider_value_change(self, slider_value, **kwargs):
-        # new_mesh = pv.read("/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-0000{:02d}.vtk".format())
-        # self.replace_mesh(self.mesh_array[slider_value])
         self.update_mesh_from_index(int(slider_value))
-        print(f"Slider is changing slider_value to {slider_value}")
 
     @property
     def state(self):
@@ -134,13 +139,15 @@ class MeshViewer:
     def timer_callback(self):
         print("timer")
         print(self.slider_playing)
-        while self.slider_playing:
+        while self.slider_playing and self.server.running:
             self.state.slider_value = (self.state.slider_value + 1) % self.sequence_bounds[1]
-            print(self.state.slider_value)
+
             # self.update_mesh_from_index(self.state.slider_value)
 
             self.loop.call_soon_threadsafe(self.update_mesh_from_index, self.state.slider_value)
-            self.loop.call_soon_threadsafe(self.server.js_call, ["slider", "setAttribute", ["aria-valuenow", str(self.state.slider_value)]])
+            style = f"--v-slider-thumb-position: {self.state.slider_value}%; --v-slider-thumb-size: 20px;"
+            self.loop.call_soon_threadsafe(self.server.js_call, ["slider", "setAttribute", ["style", style]])
+            self.loop.call_soon_threadsafe(self.server.js_call, ["slider", "requestFullscreen"])
 
             time.sleep(0.25)
 
@@ -182,12 +189,14 @@ class MeshViewer:
         # update mesh and set its active scalar field, as well as adding the scalar bar
         self.mesh = new_mesh
         self.mesh.set_active_scalars(self.state.mesh_representation)
-        # self.pl.add_scalar_bar(self.state.mesh_representation)
-        tmp_act = self.pl.add_mesh(self.mesh,**kwargs_plot)
-        # remove old mesh and add the new one
-        self.pl.remove_actor(self.actor)
-        self.actor = tmp_act
 
+        print(f"wireframe_on is {self.state.wireframe_on}")
+        # Replace actor with the new mesh (automatically update the actor because they have the same name)
+        self.pl.add_mesh(self.mesh, style= "wireframe" if self.state.wireframe_on else "surface", name="displayed_mesh",
+                                         silhouette=False)
+        print("wireframe" if self.state.wireframe_on else "surface")
+        self.pl.add_scalar_bar(self.state.mesh_representation)
+        self.scalar_bar_exist = True
 
 
     @controller.set("reset_resolution")
@@ -195,11 +204,14 @@ class MeshViewer:
         self.state.welcome = str(self.counter)
 
     def start_server(self):
-        self.server.start()
+        try:
+            self.server.start()
+        except KeyboardInterrupt:
+            self.stop_event.set()  # Set the stop event when an interrupt signal is received
+            self.timer.join()  # Wait for the timer thread to finish
 
     def option_dropdown(self):
         return vuetify.VSelect(
-            # Representation
             v_model=("mesh_representation", "None"),
             items=("fields", self.options),
             label="Representation",
@@ -210,15 +222,23 @@ class MeshViewer:
         )
 
     def build_slider(self):
-        slider = vuetify.VSlider(
-            ref="slider",
-            label="Example",
-            min=self.sequence_bounds[0],
-            max=self.sequence_bounds[1],
-            v_model=("slider_value", 8),
-            step=1
-        )
-        return slider
+        row = vuetify.VRow(dense=False, align='start')
+        with row:
+            vuetify.VBtn(
+                icon=True,
+                click=self.play_button
+            )
+            html.Div("{{ slider_value }}")
+            slider = vuetify.VSlider(
+                ref="slider",
+                label="",
+                min=self.sequence_bounds[0],
+                max=self.sequence_bounds[1],
+                v_model=("slider_value", 8),
+                step=1
+            )
+        return row
+
 
     @controller.set("play_button")
     def play_button(self):
@@ -232,12 +252,8 @@ class MeshViewer:
     def build_ui(self):
         with VAppLayout(self.server) as layout:
             with layout.root:
-                with vuetify.VRow(dense=True):
-                    vuetify.VBtn(
-                        icon=True,
-                        click=self.play_button
-                    )
-                    self.build_slider()
+
+
                 with html.Div(ref="container",
                               style="height: 600px; width:1200px"):  # add the following arg: style="height: 100vh; width:100vw" to have the plotter taking all screen
                     plotter_ui(self.pl, default_server_rendering=False)
@@ -250,6 +266,7 @@ class MeshViewer:
                                                v_model=("warp_input", 0.0)
                                                )
                     vuetify.VCheckbox(v_model=("wireframe_on",), label="Wireframe on")
+                    self.build_slider()
                     html.Div("{{ welcome }}")
                     vuetify.VBtn(icon=True, click=self.ctrl.reset_resolution)
                     vuetify.VBtn(click=self.request_full, style="position: absolute; bottom:25px; right:25px;")
