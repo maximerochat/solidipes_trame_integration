@@ -29,68 +29,70 @@ FIELD_NAMES = ["field1", "field2", "field3"]
 class MeshViewer:
 
     def __init__(self, mesh=None, plotter=None):
+
         pv.OFF_SCREEN = True
-
+        self.scalar_bar_exist = None
         self.server = get_server()
-
-        # self.state, self.ctrl = self.server.state, self.server.controller
-        self.state.welcome = "hello"
-        self.state.is_full_screen = False
-        if mesh is None:
-            mesh = examples.load_random_hills()
-
-        self.counter = 30
-        formatted_num = "{:02d}".format(self.counter)
+        self.slider_playing = False
+        self.path = None
 
         self.mesh = None
-        mesh = pv.read(
-            f"/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-0000{formatted_num}.vtk")
+        self.clean_mesh = None
 
-        self.clean_mesh = mesh.copy()
-        self.options = mesh.array_names.copy()
-        self.options.insert(0, "None")
         self.style = {
             "background-color": "black",
             "font-color": "white"
         }
-        self.pl = pv.Plotter()
-        self.pl.background_color = self.style["background-color"]
-        self.pl.theme.font.color = self.style["font-color"]
 
-
-        self.scalar_bar_exist = False
+        self.pl = self.setup_pl()
 
         setattr(self, "on_server_bind", self.server.controller.add("on_server_bind")(self.on_server_bind))
 
-        self.replace_mesh(mesh)
+        # self.replace_mesh(mesh)
         self.my_routes = [
             web.get("/select_mesh", self.change_mesh),
         ]
 
-        self.state.mesh_representation = self.options[1]
-        self.state.warp_input = 0
-        self.state.wireframe_on = True
-        self.state.slider_value = 0
-        self.slider_playing = False
-        self.timeout = 0.25
-        self.timer = threading.Thread(target=self.timer_callback)
-        self.sequence_bounds = [0, 70]
-        self.viewer = plotter_ui(self.pl, default_server_rendering=False)
+        self.setup_state()
 
-        self.stop_event = threading.Event()
+        self.setup_timer()
 
         self.loop = asyncio.get_event_loop()
 
-        self.mesh_array = [
-            pv.read("/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-0000{:02d}.vtk".format(
-                slider_value)) for slider_value in range(self.sequence_bounds[1])
-        ]
-        self.prev_bar_repr = self.state.mesh_representation
+        self.mesh_array = None
+        m = pv.read("/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-000000.vtk")
+
+        self.state.options = m.array_names.copy()
+        self.state.options.insert(0, "None")
+        # self.state.options = [None]
+
         self.build_ui()
+
+    def setup_pl(self) -> pv.Plotter:
+        pl = pv.Plotter()
+        pl.background_color = self.style["background-color"]
+        pl.theme.font.color = self.style["font-color"]
+        self.scalar_bar_exist = False
+        return pl
+
+    def setup_state(self):
+        self.state.is_full_screen = False
+        self.state.mesh_representation = self.state.options[0] if self.state.options is not None else None
+
+        self.state.warp_input = 0
+        self.state.wireframe_on = True
+        self.state.slider_value = 0
+        self.state.play_pause_icon = "mdi-play"
+        self.prev_bar_repr = self.state.mesh_representation
+
+    def setup_timer(self):
+        self.timeout = 0.25
+        self.timer = threading.Thread(target=self.timer_callback)
+        self.sequence_bounds = [0, 70]
 
     @change("mesh_representation")
     def update_mesh_representation(self, mesh_representation, **kwargs):
-        if self.mesh is not None and self.scalar_bar_exist and self.prev_bar_repr is not None:
+        if self.mesh is not None and self.scalar_bar_exist and self.prev_bar_repr is not None and self.prev_bar_repr != "None":
             self.pl.remove_scalar_bar(self.prev_bar_repr)
 
         self.prev_bar_repr = mesh_representation
@@ -124,6 +126,7 @@ class MeshViewer:
     def update_wireframe_on(self, **kwargs):
         self.replace_mesh(self.mesh)
 
+
     @change("slider_value")
     def slider_value_change(self, slider_value, **kwargs):
         self.update_mesh_from_index(int(slider_value))
@@ -145,59 +148,67 @@ class MeshViewer:
             # self.update_mesh_from_index(self.state.slider_value)
 
             self.loop.call_soon_threadsafe(self.update_mesh_from_index, self.state.slider_value)
-            style = f"--v-slider-thumb-position: {self.state.slider_value}%; --v-slider-thumb-size: 20px;"
-            self.loop.call_soon_threadsafe(self.server.js_call, ["slider", "setAttribute", ["style", style]])
-            self.loop.call_soon_threadsafe(self.server.js_call, ["slider", "requestFullscreen"])
-
+            self.loop.call_soon_threadsafe(self.server.force_state_push, "slider_value")
             time.sleep(0.25)
 
         self.timer = threading.Thread(target=self.timer_callback)
 
     def update_mesh_from_index(self, idx):
-        self.replace_mesh(self.mesh_array[idx])
+        if self.mesh_array is not None:
+            self.replace_mesh(self.mesh_array[idx])
 
     async def change_mesh(self, request):
-        # print((await request.json())["test"])
+
         request_body: Dict[str, str] = await request.json()
-        path = request_body.get("mesh_path", None)
-        if path is None:
+        self.path = request_body.get("mesh_path", None)
+        if self.path is None:
             print("Error : No filepath found in the change mesh request")
             return
 
-        if not os.path.exists(path):
-            print("Error, the path specified does not exist")
-            return
+        self.mesh_array = []
+        for i in range(self.sequence_bounds[1]):
+            path = self.path % i
+            if not os.path.exists(path):
+                print("Error, the path specified does not exist")
+                return
+            self.mesh_array.append(pv.read(path))
 
-        self.counter += 10
-        formatted_num = "{:02d}".format(self.counter)
+        self.update_mesh_from_index(0)
 
-        print(path)
-        mesh = pv.read(
-            path)
-        self.replace_mesh(mesh)
+        self.server.force_state_push("options")
+        self.server = self.server.create_child_server()
+        self.server.force_state_push("options")
 
-        self.state.welcome = "updated from request"
-        # print("new handler")
+        # self.setup_pl()
+        # self.build_ui()
         return web.json_response(status=200)
 
     def replace_mesh(self, new_mesh):
+        if new_mesh is None:
+            return
+
         # set custom style
         kwargs_plot = {}
         if self.state.wireframe_on:
             kwargs_plot["style"] = "wireframe"
-
+        print("here 1")
         # update mesh and set its active scalar field, as well as adding the scalar bar
         self.mesh = new_mesh
+        print("here 2")
         self.mesh.set_active_scalars(self.state.mesh_representation)
-
-        print(f"wireframe_on is {self.state.wireframe_on}")
+        print("here 3")
         # Replace actor with the new mesh (automatically update the actor because they have the same name)
-        self.pl.add_mesh(self.mesh, style= "wireframe" if self.state.wireframe_on else "surface", name="displayed_mesh",
-                                         silhouette=False)
-        print("wireframe" if self.state.wireframe_on else "surface")
-        self.pl.add_scalar_bar(self.state.mesh_representation)
-        self.scalar_bar_exist = True
+        self.pl.add_mesh(self.mesh, style="wireframe" if self.state.wireframe_on else "surface", name="displayed_mesh",
+                         silhouette=False)
 
+        print("here 4")
+        if self.state.options != new_mesh.array_names:
+            self.state.options = new_mesh.array_names.copy()
+
+
+        if not self.slider_playing:
+            self.pl.add_scalar_bar(self.state.mesh_representation)
+            self.scalar_bar_exist = True
 
     @controller.set("reset_resolution")
     def reset_resolution(self):
@@ -211,9 +222,11 @@ class MeshViewer:
             self.timer.join()  # Wait for the timer thread to finish
 
     def option_dropdown(self):
+
         return vuetify.VSelect(
             v_model=("mesh_representation", "None"),
-            items=("fields", self.options),
+            items=("fields", self.state.options),
+
             label="Representation",
             hide_details=True,
             dense=True,
@@ -222,12 +235,14 @@ class MeshViewer:
         )
 
     def build_slider(self):
-        row = vuetify.VRow(dense=False, align='start')
+        row = html.Div(style='display:flex;justify-content:center;align-content:center;gap:20px;')
         with row:
-            vuetify.VBtn(
-                icon=True,
-                click=self.play_button
-            )
+            with vuetify.VBtn(
+                    icon=True,
+                    click=self.play_button
+            ):
+                vuetify.VIcon("{{ play_pause_icon }}")
+
             html.Div("{{ slider_value }}")
             slider = vuetify.VSlider(
                 ref="slider",
@@ -239,7 +254,6 @@ class MeshViewer:
             )
         return row
 
-
     @controller.set("play_button")
     def play_button(self):
 
@@ -247,13 +261,14 @@ class MeshViewer:
         print("clicked")
         print(self.slider_playing)
         if self.slider_playing and not self.timer.is_alive():
+            self.state.play_pause_icon = "mdi-pause"
             self.timer.start()
+        else:
+            self.state.play_pause_icon = "mdi-play"
 
     def build_ui(self):
         with VAppLayout(self.server) as layout:
             with layout.root:
-
-
                 with html.Div(ref="container",
                               style="height: 600px; width:1200px"):  # add the following arg: style="height: 100vh; width:100vw" to have the plotter taking all screen
                     plotter_ui(self.pl, default_server_rendering=False)
