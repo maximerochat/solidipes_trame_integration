@@ -9,11 +9,13 @@ from aiohttp import web
 from trame.decorators import TrameApp, change, controller
 
 import os
+import numpy as np
 import time, threading
 import asyncio
 
 from typing import Dict
 
+from MeshViewerComponent import MeshViewerComponent
 
 class Representation:
     Points = 0
@@ -61,6 +63,10 @@ class MeshViewer:
 
         self.mesh_array = None
         m = pv.read("/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-000000.vtk")
+        p = "/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-%06d.vtk"
+
+        self.mesh_array = [pv.read(p % i) for i in range(self.sequence_bounds[1])]
+
 
         self.state.options = m.array_names.copy()
         self.state.options.insert(0, "None")
@@ -68,11 +74,13 @@ class MeshViewer:
 
         self.build_ui()
 
+
     def setup_pl(self) -> pv.Plotter:
         pl = pv.Plotter()
         pl.background_color = self.style["background-color"]
         pl.theme.font.color = self.style["font-color"]
         self.scalar_bar_exist = False
+        self.scalar_bar_mapper = None
         return pl
 
     def setup_state(self):
@@ -92,14 +100,18 @@ class MeshViewer:
 
     @change("mesh_representation")
     def update_mesh_representation(self, mesh_representation, **kwargs):
-        if self.mesh is not None and self.scalar_bar_exist and self.prev_bar_repr is not None and self.prev_bar_repr != "None":
-            self.pl.remove_scalar_bar(self.prev_bar_repr)
+        # if self.mesh is not None and self.prev_bar_repr is not None and self.prev_bar_repr != "None":
+        if self.mesh is not None and self.mesh.active_scalars is not None:
+            self.pl.remove_scalar_bar()
 
         self.prev_bar_repr = mesh_representation
         print(mesh_representation)
         if mesh_representation == "None":
             self.state.mesh_representation = None
+        for i in range(self.sequence_bounds[1]):
+            self.mesh_array[i].set_active_scalars(self.state.mesh_representation)
         self.replace_mesh(self.mesh)
+
 
     @change("warp_input")
     def update_warp_input(self, **kwargs):
@@ -183,6 +195,23 @@ class MeshViewer:
         # self.build_ui()
         return web.json_response(status=200)
 
+    def compute_scalar_bar(self):
+        if self.mesh_array is None or self.mesh is None or self.mesh.active_scalars is None:
+            return
+        print("computing the scalar range")
+        max_bound = -np.inf
+        min_bound = np.inf
+        for i in range(self.sequence_bounds[1]):
+            l_max = self.mesh_array[i].active_scalars.max()
+            l_min = self.mesh_array[i].active_scalars.min()
+            if l_max > max_bound:
+                max_bound = l_max
+            if l_min < min_bound:
+                min_bound = l_min
+        self.pl.mapper.lookup_table.SetTableRange(min_bound,max_bound )
+        self.pl.add_scalar_bar(self.state.mesh_representation)
+        return self.pl.mapper
+
     def replace_mesh(self, new_mesh):
         if new_mesh is None:
             return
@@ -191,24 +220,26 @@ class MeshViewer:
         kwargs_plot = {}
         if self.state.wireframe_on:
             kwargs_plot["style"] = "wireframe"
-        print("here 1")
+
         # update mesh and set its active scalar field, as well as adding the scalar bar
         self.mesh = new_mesh
-        print("here 2")
+
         self.mesh.set_active_scalars(self.state.mesh_representation)
-        print("here 3")
+        if self.scalar_bar_mapper is None:
+            self.scalar_bar_mapper = self.compute_scalar_bar()
         # Replace actor with the new mesh (automatically update the actor because they have the same name)
         self.pl.add_mesh(self.mesh, style="wireframe" if self.state.wireframe_on else "surface", name="displayed_mesh",
-                         silhouette=False)
+                         silhouette=False, show_scalar_bar=True, scalar_bar_args={"mapper": self.scalar_bar_mapper})
 
-        print("here 4")
+
         if self.state.options != new_mesh.array_names:
             self.state.options = new_mesh.array_names.copy()
 
 
-        if not self.slider_playing:
-            self.pl.add_scalar_bar(self.state.mesh_representation)
-            self.scalar_bar_exist = True
+        # if not self.slider_playing:
+        #     self.pl.add_scalar_bar(self.state.mesh_representation)
+        #     print(self.pl.mapper.lookup_table.SetTableRange(0, 1))
+        #     self.scalar_bar_exist = True
 
     @controller.set("reset_resolution")
     def reset_resolution(self):
@@ -217,6 +248,7 @@ class MeshViewer:
     def start_server(self):
         try:
             self.server.start()
+
         except KeyboardInterrupt:
             self.stop_event.set()  # Set the stop event when an interrupt signal is received
             self.timer.join()  # Wait for the timer thread to finish
