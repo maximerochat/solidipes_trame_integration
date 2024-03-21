@@ -44,6 +44,22 @@ Planning :
 
 
 
+comment faire pour calculer une bonne valeur de warp
+
 
 Paraview library :
 https://github.com/Kitware/trame-vtk
+
+
+ctrl = server.controller
+
+            @ctr.add("on_server_ready")
+            def on_ready(**state):
+                pass
+
+            # or
+            ctrl.on_server_ready.add(on_ready)
+
+state =server.state
+
+@state.change(<state variable of callbacl>) 

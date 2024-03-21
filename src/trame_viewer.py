@@ -12,12 +12,11 @@ import os
 import numpy as np
 import time, threading
 import asyncio
+from abc import ABC, abstractmethod
 
 from typing import Dict
 
 from MeshViewerComponent import MeshViewerComponent
-
-
 
 
 @TrameApp()
@@ -58,21 +57,16 @@ class MeshViewer:
         self.loop = asyncio.get_event_loop()
 
         self.mesh_array = None
-        # m = pv.read("/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-000000.vtk")
-        
-        m = pv.read("/home/maxime/Documents/EPFL/job/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-000000.vtk")
 
-        # p = "/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-%06d.vtk"
-
-        # self.mesh_array = [pv.read(p % i) for i in range(self.sequence_bounds[1])]
-        #
-        # self.state.options = m.array_names.copy()
-        # self.state.options.insert(0, "None")
         self.state.options = [None]
+        self.state.options_warp = ["None", "A", "B"]
+
         self.actor = None
         self.width = 800
         self.height = 900
         self.ui = self.build_ui()
+
+
 
     def setup_pl(self) -> pv.Plotter:
         pl = pv.Plotter()
@@ -86,6 +80,7 @@ class MeshViewer:
     def setup_state(self):
         self.state.is_full_screen = False
         self.state.mesh_representation = self.state.options[0] if self.state.options is not None else None
+        self.state.warped_field = None
 
         self.state.warp_input = 0
         self.state.wireframe_on = True
@@ -114,9 +109,8 @@ class MeshViewer:
                 self.mesh_array[i].set_active_scalars(self.state.mesh_representation)
         # self.replace_mesh(self.mesh)
 
-
-
         self.update_mesh_from_index(self.state.slider_value)
+        self.update_warp_input()
         self.ui = self.build_ui()
         # self.update_mesh_from_index(1)
 
@@ -124,29 +118,20 @@ class MeshViewer:
     def update_warp_input(self, **kwargs):
 
         try:
-
             new_warp = float(self.state.warp_input)
 
-            min_v, max_v = self.bounds_scalar.get(self.state.mesh_representation, (0, 0))
-
-            offset = (max_v - min_v) / 0.01
-
-            if new_warp > float(self.prev_wrap):
-                new_warp = float(self.state.warp_input) + offset
-                self.state.warp_input = str(float(self.prev_wrap) + offset)
-            elif new_warp < float(self.prev_wrap):
-                new_warp = float(self.state.warp_input) - offset
-                self.state.warp_input = str(float(self.prev_wrap) - offset)
             dim = self.mesh.point_data.get_array(self.state.mesh_representation).ndim  # 1 if scalar, 2 if vector
             if dim == 1:
-                new_pyvista_mesh = self.clean_mesh.warp_by_scalar(self.state.mesh_representation,
+                new_pyvista_mesh = self.clean_mesh.warp_by_scalar(self.state.warped_field,
                                                                   factor=new_warp)
             else:
-                new_pyvista_mesh = self.clean_mesh.warp_by_vector(self.state.mesh_representation,
+                new_pyvista_mesh = self.clean_mesh.warp_by_vector(self.state.warped_field,
                                                                   factor=new_warp)
 
             self.prev_wrap = self.state.warp_input
             self.replace_mesh(new_pyvista_mesh)
+
+
         except ValueError as e:
             print(e)
             pass
@@ -155,6 +140,12 @@ class MeshViewer:
         finally:
             return
 
+    @change("warped_field")
+    def update_warped_field(self, warped_field, **kwargs):
+        if warped_field is None or warped_field == "None":
+            return
+        self.update_warp_input(warped_field= warped_field)
+
     @change("wireframe_on")
     def update_wireframe_on(self, **kwargs):
         self.replace_mesh(self.mesh)
@@ -162,6 +153,7 @@ class MeshViewer:
     @change("slider_value")
     def slider_value_change(self, slider_value, **kwargs):
         self.update_mesh_from_index(int(slider_value))
+        self.state.warp_input = 0
 
     @property
     def state(self):
@@ -189,6 +181,7 @@ class MeshViewer:
         if self.mesh_array is not None:
             self.clean_mesh = self.mesh_array[idx]
             self.replace_mesh(self.mesh_array[idx])
+            # self.update_warp_input()
 
     def handle_new_mesh(self, mesh_path, seq_len):
         self.mesh_array = []
@@ -202,7 +195,6 @@ class MeshViewer:
                 print("Error, the path specified does not exist")
                 return
             self.mesh_array.append(pv.read(path))
-
 
     async def change_mesh(self, request):
 
@@ -218,25 +210,19 @@ class MeshViewer:
 
         self.handle_new_mesh(self.path, self.sequence_bounds[1])
 
-        # self.mesh_array = []
-        # for i in range(self.sequence_bounds[1]):
-        #     path = self.path % i
-        #     if not os.path.exists(path):
-        #         print("Error, the path specified does not exist")
-        #         return
-        #     self.mesh_array.append(pv.read(path))
         self.state.mesh_representation = None
         self.replace_mesh(self.mesh_array[0])
 
         self.state.options = self.mesh_array[0].array_names.copy()
         self.state.options.insert(0, "None")
+        self.state.options_warp = self.mesh_array[0].array_names.copy()
+        self.state.options_warp.insert(0, "None")
 
-        print(self.state.options)
         self.computes_bounds_scalar()
         self.update_ui()
         response_body = {}
         if self.height - self.estimate_controller_height()[1] < 700:
-            response_body["request_space"] = 1.65*self.height
+            response_body["request_space"] = 1.65 * self.height
 
         self.pl.reset_camera()
         return web.json_response(response_body, status=200)
@@ -305,7 +291,8 @@ class MeshViewer:
 
         # Replace actor with the new mesh (automatically update the actor because they have the same name)
         self.actor = self.pl.add_mesh(self.mesh, style="wireframe" if self.state.wireframe_on else None,
-                                      name="displayed_mesh", show_scalar_bar=True, scalar_bar_args={"mapper": self.pl.mapper})
+                                      name="displayed_mesh", show_scalar_bar=True,
+                                      scalar_bar_args={"mapper": self.pl.mapper})
 
     def start_server(self):
         try:
@@ -317,7 +304,6 @@ class MeshViewer:
     def update_ui(self):
         if self.mesh is not None and self.mesh.active_scalars is not None:
             self.pl.remove_scalar_bar()
-
         self.ui = self.build_ui()
 
     def option_dropdown(self):
@@ -339,13 +325,12 @@ class MeshViewer:
                     click=self.play_button
             ):
                 vuetify.VIcon("{{ play_pause_icon }}")
-
             html.Div("{{ slider_value }}")
             vuetify.VSlider(
                 ref="slider",
                 label="",
                 min=self.sequence_bounds[0],
-                max=self.sequence_bounds[1]-1,
+                max=self.sequence_bounds[1] - 1,
                 v_model=("slider_value", 8),
                 step=1
             )
@@ -361,23 +346,42 @@ class MeshViewer:
         self.slider_playing = not self.slider_playing
         if self.slider_playing and not self.timer.is_alive():
             self.state.play_pause_icon = "mdi-pause"
-            
+
             self.timer.start()
         else:
-            self.state.play_pause_icon = "mdi-play"    
+            self.state.play_pause_icon = "mdi-play"
         self.update_ui()
+
+
+    def build_warp_option(self):
+        return vuetify.VSelect(
+                v_model=("warped_field"),
+                items=("options_warp", self.state.options_warp),
+                label="Warped Field",
+                hide_details=True,
+                dense=True,
+                outlined=True,
+                classes="pt-1",
+            )
 
     def build_warper(self):
         warper = vuetify.VCol(cols="6")
         with warper:
+            print("array of options ------------------")
+            print(self.state.options_warp)
+            options = ['None', 'U', 'V', 'A', 'E', 'dE']
+            options = self.state.options_warp
+            print(options)
+            self.build_warp_option()
+
+            # self.option_dropdown(field_linked="warped_field", options=self.state.options)
             if self.state.mesh_representation != "None" and self.state.mesh_representation is not None:
-                ndim = self.mesh_array[0].get_array(self.state.mesh_representation).shape[1]
-                for i in range(ndim):
-                    html.Input(type="number", label="warp",
-                                       v_model=("warp_input", 0.0),
-                                       ref=f"warp-{i}",
-                               step="0.1"
-                                       )
+
+                html.Input(type="number", label="warp",
+                           v_model=("warp_input", 0.0),
+                           ref=f"warp-input",
+                           step="1"
+                           )
 
         return warper
 
@@ -400,10 +404,8 @@ class MeshViewer:
     def estimate_controller_height(self):
         if self.mesh_array is not None and self.state.mesh_representation is not None:
             ndim = self.mesh_array[0].get_array(self.state.mesh_representation).shape[1]
-            return  30 * ndim, 9*30
-        return 0.2*self.height, 9*30
-
-
+            return 30 * ndim, 9 * 30
+        return 0.2 * self.height, 9 * 30
 
     def build_ui(self):
         control_height = self.estimate_controller_height()[0]
@@ -422,13 +424,15 @@ class MeshViewer:
         with VAppLayout(self.server) as layout:
             with layout.root:
                 with html.Div(
-                              style=f"height: {self.height}px ;width:{width}"):  # add the following arg: style="height: 100vh; width:100vw" to have the plotter taking all screen
+                        style=f"height: {self.height}px ;width:{width}"):  # add the following arg: style="height: 100vh; width:100vw" to have the plotter taking all screen
                     with html.Div(ref="container", style=f"height:{plotter_height};padding: 0;"):
                         with vuetify.VCol(style=f"height:{plotter_height};padding: 0;"):
                             if self.slider_playing:
-                                plotter_ui(self.pl, default_server_rendering=True, mode="server", style="width: 100%; height:100%;background-color: black;")
-                            else:    
-                                plotter_ui(self.pl, default_server_rendering=True, style="width: 100%; height:100%;background-color: black;")
+                                plotter_ui(self.pl, default_server_rendering=True, mode="server",
+                                           style="width: 100%; height:100%;background-color: black;")
+                            else:
+                                plotter_ui(self.pl, default_server_rendering=True,
+                                           style="width: 100%; height:100%;background-color: black;")
 
                     with vuetify.VCol(style=f"height:{control_height}px;padding: 0;width:100%;"):
                         self.build_mesh_control_layout()
@@ -436,8 +440,6 @@ class MeshViewer:
 
     def on_server_bind(self, wslink_server):
         wslink_server.app.add_routes(self.my_routes)
-
-
 
     def request_full(self):
         self.server.js_call("container", "requestFullscreen")
@@ -447,6 +449,24 @@ class MeshViewer:
         #     self.server.js_call("", "exitFullscreen()")
         self.state.is_full_screen = not self.state.is_full_screen
         self.update_ui()
+
+
+class Component(ABC):
+    def __init__(self, state, ctrl):
+        self.supported_handler = ["change"]
+        self.state = state
+        self.ctrl = ctrl
+
+
+    # add corresponding decorator to fucntion (change or set)
+    @abstractmethod
+    def handler(self, new_value, **kwargs):
+        pass
+
+    @abstractmethod
+    def render(self):
+        pass
+
 
 
 if __name__ == "__main__":

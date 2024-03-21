@@ -14,11 +14,9 @@ class MeshViewerComponent:
             for i in range(sequence_size):
                 path = mesh_path % i
                 if not os.path.exists(path):
-                    print("Error, the path specified does not exist")
-                    return
+                    raise FileNotFoundError(f"The file '{path}' does not exist.")
         elif not os.path.exists(mesh_path):
-            print("invalid mesh file path")
-            return
+            raise FileNotFoundError(f"The file '{mesh_path}' does not exist.")
         
         self.sequence_size = sequence_size
         self.mesh_path = mesh_path
