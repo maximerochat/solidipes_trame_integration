@@ -373,9 +373,10 @@ class MeshViewer:
             if self.state.mesh_representation != "None" and self.state.mesh_representation is not None:
                 ndim = self.mesh_array[0].get_array(self.state.mesh_representation).shape[1]
                 for i in range(ndim):
-                    vuetify.VTextField(type="number", label="warp",
+                    html.Input(type="number", label="warp",
                                        v_model=("warp_input", 0.0),
-                                       ref=f"warp-{i}"
+                                       ref=f"warp-{i}",
+                               step="0.1"
                                        )
 
         return warper
