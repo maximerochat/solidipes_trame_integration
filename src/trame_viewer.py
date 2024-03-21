@@ -58,10 +58,13 @@ class MeshViewer:
         self.loop = asyncio.get_event_loop()
 
         self.mesh_array = None
-        m = pv.read("/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-000000.vtk")
-        p = "/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-%06d.vtk"
+        # m = pv.read("/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-000000.vtk")
+        
+        m = pv.read("/home/maxime/Documents/EPFL/job/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-000000.vtk")
 
-        self.mesh_array = [pv.read(p % i) for i in range(self.sequence_bounds[1])]
+        # p = "/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-%06d.vtk"
+
+        # self.mesh_array = [pv.read(p % i) for i in range(self.sequence_bounds[1])]
         #
         # self.state.options = m.array_names.copy()
         # self.state.options.insert(0, "None")
