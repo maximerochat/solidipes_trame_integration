@@ -34,3 +34,9 @@ Planning :
   
 - le warp voir comment géré les différente taille de scalaire/vecteur/tenseur
 - Voir ce qui est faisable pour débuger la client-side rendering
+
+
+
+
+Paraview library :
+https://github.com/Kitware/trame-vtk

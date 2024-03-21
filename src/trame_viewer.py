@@ -98,7 +98,6 @@ class MeshViewer:
 
     @change("mesh_representation")
     def update_mesh_representation(self, mesh_representation, **kwargs):
-        # if self.mesh is not None and self.prev_bar_repr is not None and self.prev_bar_repr != "None":
 
         if self.mesh is not None and self.mesh.active_scalars is not None:
             self.pl.remove_scalar_bar()
@@ -121,12 +120,13 @@ class MeshViewer:
     def update_warp_input(self, **kwargs):
 
         try:
+
             new_warp = float(self.state.warp_input)
-            print(self.bounds_scalar.get(self.state.mesh_representation, [(0, 0), 0]))
-            min_v, max_v = self.bounds_scalar.get(self.state.mesh_representation, [(0, 0), 0])[0]
-            print(self.pl.mapper.lookup_table.GetTableRange())
-            offset = (max_v - min_v) / 0.9
-            print(offset)
+
+            min_v, max_v = self.bounds_scalar.get(self.state.mesh_representation, (0, 0))
+
+            offset = (max_v - min_v) / 0.01
+
             if new_warp > float(self.prev_wrap):
                 new_warp = float(self.state.warp_input) + offset
                 self.state.warp_input = str(float(self.prev_wrap) + offset)
@@ -168,7 +168,7 @@ class MeshViewer:
         return self.server.controller
 
     def timer_callback(self):
-        print("timer")
+
         print(self.slider_playing)
         while self.slider_playing and self.server.running:
             self.state.slider_value = (self.state.slider_value + 1) % self.sequence_bounds[1]
@@ -186,6 +186,20 @@ class MeshViewer:
             self.clean_mesh = self.mesh_array[idx]
             self.replace_mesh(self.mesh_array[idx])
 
+    def handle_new_mesh(self, mesh_path, seq_len):
+        self.mesh_array = []
+        if seq_len == 1:
+            self.mesh_array.append(pv.read(mesh_path))
+            return
+
+        for i in range(self.sequence_bounds[1]):
+            path = self.path % i
+            if not os.path.exists(path):
+                print("Error, the path specified does not exist")
+                return
+            self.mesh_array.append(pv.read(path))
+
+
     async def change_mesh(self, request):
 
         request_body: Dict[str, str] = await request.json()
@@ -198,31 +212,35 @@ class MeshViewer:
             print("Error : No filepath found in the change mesh request")
             return
 
-        self.mesh_array = []
-        for i in range(self.sequence_bounds[1]):
-            path = self.path % i
-            if not os.path.exists(path):
-                print("Error, the path specified does not exist")
-                return
-            self.mesh_array.append(pv.read(path))
+        self.handle_new_mesh(self.path, self.sequence_bounds[1])
 
+        # self.mesh_array = []
+        # for i in range(self.sequence_bounds[1]):
+        #     path = self.path % i
+        #     if not os.path.exists(path):
+        #         print("Error, the path specified does not exist")
+        #         return
+        #     self.mesh_array.append(pv.read(path))
+        self.state.mesh_representation = None
         self.replace_mesh(self.mesh_array[0])
 
         self.state.options = self.mesh_array[0].array_names.copy()
         self.state.options.insert(0, "None")
 
         print(self.state.options)
-        # self.computes_bounds_scalar()
+        self.computes_bounds_scalar()
         self.update_ui()
         response_body = {}
         if self.height - self.estimate_controller_height()[1] < 700:
             response_body["request_space"] = 1.65*self.height
+
+        self.pl.reset_camera()
         return web.json_response(response_body, status=200)
 
     def compute_field_interval(self, field=None):
         if field is None:
             field = self.state.mesh_representation
-        if field is None:
+        if field is None or field == "None":
             field = self.state.options[1]
         max_bound = -np.inf
         min_bound = np.inf
@@ -355,16 +373,18 @@ class MeshViewer:
 
     def build_mesh_control_layout(self):
         layout = html.Div()
-        with layout:
+        with (layout):
             with vuetify.VRow(dense=True):
                 with vuetify.VCol(cols="6"):
                     if self.state.options[0] is not None:
                         self.option_dropdown()
                 self.build_warper()
             vuetify.VCheckbox(v_model=("wireframe_on",), label="Wireframe on")
-            self.build_slider()
-            html.Div("{{ welcome }}")
-            vuetify.VBtn(click=self.request_full, style="position: absolute; bottom:25px; right:25px;")
+            if self.sequence_bounds[1] != 1:
+                self.build_slider()
+
+            with vuetify.VBtn(click=self.request_full, style="position: absolute; bottom:25px; right:25px;", icon=True):
+                vuetify.VIcon("mdi-fullscreen" if not self.state.is_full_screen else "mdi-fullscreen-exit")
         return layout
 
     def estimate_controller_height(self):
@@ -377,15 +397,26 @@ class MeshViewer:
 
     def build_ui(self):
         control_height = self.estimate_controller_height()[0]
-        plotter_height = self.height - control_height
+        if not self.state.is_full_screen:
+            plotter_height = self.height - control_height
+            plotter_height = f"{plotter_height}px"
+            width = f"{self.width}px"
 
+
+        else:
+            plotter_height = "100%"
+            width = "100%"
+
+        print(self.height)
 
         with VAppLayout(self.server) as layout:
             with layout.root:
-                with html.Div(ref="container",
-                              style=f"height: {self.height}px ;width:{self.width}px"):  # add the following arg: style="height: 100vh; width:100vw" to have the plotter taking all screen
-                    with vuetify.VCol(style=f"height:{plotter_height}px;padding: 0;"):
-                        plotter_ui(self.pl, default_server_rendering=True, style="width: 100%; height:100%;background-color: black;")
+                with html.Div(
+                              style=f"height: {self.height}px ;width:{width}"):  # add the following arg: style="height: 100vh; width:100vw" to have the plotter taking all screen
+                    with html.Div(ref="container", style=f"height:{plotter_height};padding: 0;"):
+                        with vuetify.VCol(style=f"height:{plotter_height};padding: 0;"):
+                            plotter_ui(self.pl, default_server_rendering=True, style="width: 100%; height:100%;background-color: black;")
+
                     with vuetify.VCol(style=f"height:{control_height}px;padding: 0;width:100%;"):
                         self.build_mesh_control_layout()
             return layout
@@ -393,12 +424,16 @@ class MeshViewer:
     def on_server_bind(self, wslink_server):
         wslink_server.app.add_routes(self.my_routes)
 
+
+
     def request_full(self):
-        if not self.state.is_full_screen:
-            self.server.js_call("container", "requestFullscreen")
-        else:
-            self.server.js_call("container", "webkitExitFullscreen")
+        self.server.js_call("container", "requestFullscreen")
+        # if not self.state.is_full_screen:
+        #     self.server.js_call("container", "requestFullscreen")
+        # else:
+        #     self.server.js_call("", "exitFullscreen()")
         self.state.is_full_screen = not self.state.is_full_screen
+        self.update_ui()
 
 
 if __name__ == "__main__":

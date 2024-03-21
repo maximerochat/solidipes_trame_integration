@@ -15,6 +15,8 @@ def main():
     value = st.number_input(label="frame number",value=0)
     formatted_num = "{:02d}".format(int(value))
     mesh_viewer = MeshViewerComponent("/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-%06d.vtk", 50)
+    # mesh_viewer = MeshViewerComponent(
+    #     "/home/mrochat/dataset/jtcam-data-10172/data/T3DE/Results/VTK/results_corr-000021.vtk")
     print(value)
     mesh_viewer.show()
     # start_server()
