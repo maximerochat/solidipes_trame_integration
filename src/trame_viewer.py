@@ -110,7 +110,8 @@ class MeshViewer:
         if mesh_representation == "None":
             self.state.mesh_representation = None
         for i in range(self.sequence_bounds[1]):
-            self.mesh_array[i].set_active_scalars(self.state.mesh_representation)
+            if self.mesh_array is not None:
+                self.mesh_array[i].set_active_scalars(self.state.mesh_representation)
         # self.replace_mesh(self.mesh)
 
 
@@ -314,6 +315,9 @@ class MeshViewer:
             self.timer.join()  # Wait for the timer thread to finish
 
     def update_ui(self):
+        if self.mesh is not None and self.mesh.active_scalars is not None:
+            self.pl.remove_scalar_bar()
+
         self.ui = self.build_ui()
 
     def option_dropdown(self):
@@ -357,9 +361,11 @@ class MeshViewer:
         self.slider_playing = not self.slider_playing
         if self.slider_playing and not self.timer.is_alive():
             self.state.play_pause_icon = "mdi-pause"
+            
             self.timer.start()
         else:
-            self.state.play_pause_icon = "mdi-play"
+            self.state.play_pause_icon = "mdi-play"    
+        self.update_ui()
 
     def build_warper(self):
         warper = vuetify.VCol(cols="6")
@@ -418,7 +424,10 @@ class MeshViewer:
                               style=f"height: {self.height}px ;width:{width}"):  # add the following arg: style="height: 100vh; width:100vw" to have the plotter taking all screen
                     with html.Div(ref="container", style=f"height:{plotter_height};padding: 0;"):
                         with vuetify.VCol(style=f"height:{plotter_height};padding: 0;"):
-                            plotter_ui(self.pl, default_server_rendering=True, style="width: 100%; height:100%;background-color: black;")
+                            if self.slider_playing:
+                                plotter_ui(self.pl, default_server_rendering=True, mode="server", style="width: 100%; height:100%;background-color: black;")
+                            else:    
+                                plotter_ui(self.pl, default_server_rendering=True, style="width: 100%; height:100%;background-color: black;")
 
                     with vuetify.VCol(style=f"height:{control_height}px;padding: 0;width:100%;"):
                         self.build_mesh_control_layout()

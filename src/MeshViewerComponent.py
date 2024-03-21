@@ -19,6 +19,7 @@ class MeshViewerComponent:
         elif not os.path.exists(mesh_path):
             print("invalid mesh file path")
             return
+        
         self.sequence_size = sequence_size
         self.mesh_path = mesh_path
         self.width = 800

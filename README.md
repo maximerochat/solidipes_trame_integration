@@ -30,10 +30,17 @@ Planning :
 
 - Faire une API pour streamlit:
   - qunad on start avec select mesh return la width et height que streamlit doit lui allouer
-  - dans le select mesh ajouter un champ qui donne la taille de la séquenc
   
 - le warp voir comment géré les différente taille de scalaire/vecteur/tenseur
-- Voir ce qui est faisable pour débuger la client-side rendering
+
+- Add min-max fields to manually select min max of scalar bar and add a button to automatically compute min-max 
+- Warp can be done on 1 input only and use pyvista scale by scalar, scale by vector,
+- Enable possibility to warp a field and show another one
+- choose components of the vector field to show
+- add a radio field that allow to choose sepcific function computed on the scalar field 
+  
+
+- Client side rendering, detect when local and disable option to play 
 
 
 
